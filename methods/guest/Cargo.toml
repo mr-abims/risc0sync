@@ -1,13 +1,11 @@
 [package]
-name = "methods-guest"
+# TODO: Rename this package to change the method name from METHOD_NAME
+name = "method_name"
 version = "0.1.0"
 edition = "2021"
 
 [workspace]
 
-[build-dependencies]
-risc0-build = "0.12"
-
 [dependencies]
-risc0-zkvm = { version = "0.12", default-features = false, features = ["std"] }
-hex = "0.4"
+# If you want to try (experimental) std support, add `features = [ "std" ]` to risc0-zkvm
+risc0-zkvm = { version = "0.18.0", default-features = false }

@@ -1,35 +1,45 @@
-use methods::{HEADERS_CHAIN_PROOF_ELF, HEADERS_CHAIN_PROOF_ID};
-use risc0_zkp::core::sha::Digest;
-use risc0_zkvm::serde::{from_slice, to_vec};
-use risc0_zkvm::Prover;
+// TODO: Update the name of the method loaded by the prover. E.g., if the method
+// is `multiply`, replace `METHOD_NAME_ELF` with `MULTIPLY_ELF` and replace
+// `METHOD_NAME_ID` with `MULTIPLY_ID`
+use methods::{METHOD_NAME_ELF, METHOD_NAME_ID};
+use risc0_zkvm::{default_prover, ExecutorEnv};
 
-const NUM_BLOCKS: u8 = 30;
+const NUM_BLOCKS: u32 = 30;
 
 fn main() {
 
-    let mut prover = Prover::new(HEADERS_CHAIN_PROOF_ELF, HEADERS_CHAIN_PROOF_ID).unwrap();
+    let mut env_builder = ExecutorEnv::builder();
 
     // Send the number of block headers to verify
-    prover.add_input_u32_slice(&to_vec(&format!("{:02X?}", NUM_BLOCKS)).unwrap());
+    env_builder.add_input(&[NUM_BLOCKS]);
 
     // Fetch and send all block headers
     for block_height in 0..NUM_BLOCKS {
 
         // Fetch block header
-        let block_id = reqwest::blocking::get(format!("https://blockstream.info/api/block-height/{}", block_height)).unwrap().text().unwrap();
-        let header = reqwest::blocking::get(format!("https://blockstream.info/api/block/{}/header", block_id)).unwrap().text().unwrap();
+        let s_block_id = reqwest::blocking::get(format!("https://blockstream.info/api/block-height/{}", block_height)).unwrap().text().unwrap();
+        let s_header = reqwest::blocking::get(format!("https://blockstream.info/api/block/{}/header", s_block_id)).unwrap().text().unwrap();
         
+        let mut header = [0u8; 80];
+        for (hex8, byte) in s_header.chars().collect::<Vec<char>>().chunks(2).map(|c| c.iter().collect::<String>()).zip(header.iter_mut()) {
+            *byte = u8::from_str_radix(&hex8, 16).unwrap();
+        }
+
         // Send block header
-        prover.add_input_u32_slice(&to_vec(&header).unwrap());
+        env_builder.add_input(&header);
     }
+
+    let env = env_builder.build().unwrap();
 
     println!("Received {} block headers from blockstream.info", NUM_BLOCKS);
 
-    let receipt = prover.run().unwrap();
+    let prover = default_prover();
 
-    receipt.verify(HEADERS_CHAIN_PROOF_ID).unwrap();
+    let receipt = prover.prove_elf(env, METHOD_NAME_ELF).unwrap();
 
-    let digest = from_slice::<Digest>(receipt.journal.as_slice()).unwrap();
+    receipt.verify(METHOD_NAME_ID).unwrap();
+
+    let digest = receipt.journal.chunks(4).rev().map(|word| format!("{:02x?}", word[0])).collect::<Vec<_>>().join("");
 
     println!("The {}th block has hashPrevBlock = {}", NUM_BLOCKS, digest);
 }

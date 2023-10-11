@@ -1,12 +1,13 @@
-
-// headers pain & proof of quark
-
 #![no_main]
+// If you want to try std support, also update the guest Cargo.toml file
+#![no_std]  // std support is experimental
 
 use risc0_zkvm::guest::env;
-use risc0_zkvm::sha::{sha, Sha};
+use risc0_zkvm::sha::{Impl, Sha256};
 
 risc0_zkvm::guest::entry!(main);
+
+// headers pain & proof of quark
 
 fn assert_le_32(time: [u8; 4], time_prev_block: &[u8]) {
 
@@ -68,7 +69,7 @@ fn assert_eq_256(hash_prev_block: [u8; 32], header_hash_prev_block: &[u8]) {
 pub fn main() {
 
     // Receive the number of block headers to verify
-    let num_blocks: u8 = hex::decode(&env::read::<String>()).unwrap()[0];
+    let num_blocks: u32 = env::read();
 
     // Genesis block has hashPrevBlock = zero
     let mut hash_prev_block = [0u8; 32];
@@ -79,12 +80,8 @@ pub fn main() {
     for block_height in 0..num_blocks {
 
         // Receive next block header
-        let header: Vec<u8> = hex::decode(&env::read::<String>()).unwrap();
-
-        // Checking block headers length
-        if header.len() != 80 {
-            panic!("Block header is 80 byte-sized");
-        }
+        let mut header = [0u8; 80];
+        env::read_slice(&mut header);
 
         // Checking version
         assert_eq_32([1u8, 0, 0, 0], &header[0..4]);
@@ -93,8 +90,8 @@ pub fn main() {
         assert_eq_256(hash_prev_block, &header[4..36]);
 
         // Computing block header hash
-        let sha256 = sha().hash_bytes(&header);
-        let hash256 = sha().hash_bytes(&sha256.as_bytes());
+        let sha256 = Impl::hash_bytes(&header);
+        let hash256 = Impl::hash_bytes(&sha256.as_bytes());
 
         // Checking unix epoch time
         let time: &[u8] = &header[68..72];
@@ -106,7 +103,7 @@ pub fn main() {
         assert_le_256(hash256.as_bytes(), target);
 
         // Commit to final block header hash
-        if block_height == num_blocks-1 { env::commit(&*hash256); }
+        if block_height == num_blocks-1 { env::commit(&hash256.as_bytes()); }
 
         // Or memorise block header hash (for the next block)
         else { hash_prev_block.copy_from_slice(&hash256.as_bytes()); }

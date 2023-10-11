@@ -1,15 +1,9 @@
 [package]
-name = "headers-chain-proof-host"
-version = "0.12.0"
+name = "host"
+version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = "4.0"
 methods = { path = "../methods" }
-risc0-zkp = "0.12"
-risc0-zkvm = "0.12"
-serde = "1.0"
+risc0-zkvm = { version = "0.18.0" }
 reqwest = { version = "0.11", features = ["blocking"] }
-
-[dev-dependencies]
-hex = "0.4"
