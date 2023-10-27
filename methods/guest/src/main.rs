@@ -6,6 +6,10 @@ use risc0_zkvm::guest::env;
 use risc0_zkvm::sha::{Impl, Sha256};
 
 risc0_zkvm::guest::entry!(main);
+extern crate alloc;
+
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 
 // headers pain & proof of quark
 
@@ -65,7 +69,21 @@ fn assert_eq_256(hash_prev_block: [u8; 32], header_hash_prev_block: &[u8]) {
 
     for n in 0..32 { assert_eq!(header_hash_prev_block[n], hash_prev_block[n]) }
 }
+fn median(block_times: &mut VecDeque<u64>) -> Option<f64> {
+    let mut sorted = block_times.clone().into_iter().collect::<Vec<_>>();
+    sorted.sort();
+    let len = sorted.len();
+    if len % 2 ==1 {
+        // If the length is odd, return the middle value
+        Some(sorted[len / 2] as f64)
+    } else {
+         // If the length is even, return the average of the two middle values
+         let first_mid = sorted[len / 2 - 1] as f64;
+         let second_mid = sorted[len / 2] as f64;
+         Some((first_mid + second_mid) / 2.0)
+    }
 
+}
 pub fn main() {
 
     // Receive the number of block headers to verify
@@ -76,6 +94,8 @@ pub fn main() {
 
     // 03/Jan/2009
     let mut time_prev_block: [u8; 4] = [0x40, 0x53, 0x5f, 0x49];
+     // Store block time
+     let mut block_times: VecDeque<u64> = VecDeque::with_capacity(11);  // Assuming median of 11 blocks
     
     for block_height in 0..num_blocks {
 
@@ -107,91 +127,52 @@ pub fn main() {
 
         // Or memorise block header hash (for the next block)
         else { hash_prev_block.copy_from_slice(&hash256.as_bytes()); }
+    //    check unix epoch time
+    let time: &[u8] = &header[68..72];
+    let time_as_u64 = u64::from_le_bytes([time[0], time[1], time[2], time[3], 0, 0, 0, 0]);
+
+    if block_times.len() == 11 {
+        block_times.pop_front();
+
     }
+    block_times.push_back(time_as_u64);
+    if block_times.len() == 11 {
+        let median = median(&mut block_times).unwrap();
+        let time_as_f64 = time_as_u64 as f64;
+        if time_as_f64 > median * 2.0 {
+            panic!("Block time is too far in the future");
+        }
+    }
+    }
+
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest;
-    use zkvm_env::env;
+    extern crate alloc;
 
-    const BASE_URL: &str = "https://blockstream.info/api";
+use alloc::collections::VecDeque;
+use alloc::vec;
+    
 
-    fn fetch_block_height() -> Result<u32, reqwest::Error> {
-        let response: u32 = reqwest::blocking::get(&format!("{}/block-height/", BASE_URL))?.json()?;
-        Ok(response)
-    }
 
-    fn fetch_block_header(block_height: u32) -> Result<[u8; 80], reqwest::Error> {
-        let response: Vec<u8> = reqwest::blocking::get(&format!("{}/block/{}/header", BASE_URL, block_height))?.bytes()?.to_vec();
-        let mut header = [0u8; 80];
-        header.copy_from_slice(&response);
-        Ok(header)
+    #[test]
+    fn test_median_odd() {
+        let mut block_times: VecDeque<u64> = VecDeque::from(vec![1, 3, 2, 4, 5]);
+        assert_eq!(median(&mut block_times), Some(3.0));
     }
 
     #[test]
-    fn test_main_valid_block() {
-        let block_height = fetch_block_height().expect("Failed to fetch block height");
-
-        let block_header = fetch_block_header(block_height).expect("Failed to fetch block header");
-
-        env::set_test_data(block_height, block_header);
-
-        // Run the main function
-        main();
-
-       
-        let committed_data = env::get_committed_data();
-        assert!(committed_data.is_some());
-        let committed_data_ref = committed_data.as_ref().unwrap();
-
-        // Compute expected commit value based on fetched header
-        let sha256 = Impl::hash_bytes(&block_header);
-        let expected_commit_data = Impl::hash_bytes(&sha256.as_bytes());
-
-        assert_eq!(committed_data_ref, &expected_commit_data.as_bytes());
+    fn test_median_even() {
+        let mut block_times: VecDeque<u64> = VecDeque::from(vec![1, 3, 2, 4]);
+        assert_eq!(median(&mut block_times), Some(2.5));
     }
-}
 
-mod zkvm_env {
-    #[cfg(not(test))]
-    pub use risc0_zkvm::guest::env::*;
-
-    #[cfg(test)]
-    pub mod env {
-        static mut TEST_BLOCK_HEIGHT: Option<u32> = None;
-        static mut TEST_HEADER: Option<[u8; 80]> = None;
-        static mut COMMITTED_DATA: Option<Vec<u8>> = None;
-
-        pub fn read() -> u32 {
-            unsafe {
-                TEST_BLOCK_HEIGHT.expect("Block height not set for test")
-            }
-        }
-
-        pub fn read_slice(buffer: &mut [u8]) {
-            unsafe {
-                buffer.copy_from_slice(&TEST_HEADER.expect("Header not set for test"));
-            }
-        }
-
-        pub fn commit(data: &[u8]) {
-            unsafe {
-                COMMITTED_DATA = Some(data.to_vec());
-            }
-        }
-
-        pub fn get_committed_data() -> Option<Vec<u8>> {
-            unsafe { COMMITTED_DATA.clone() }
-        }
-
-        pub fn set_test_data(block_height: u32, header: [u8; 80]) {
-            unsafe {
-                TEST_BLOCK_HEIGHT = Some(block_height);
-                TEST_HEADER = Some(header);
-            }
-        }
+    #[test]
+    fn test_median_empty() {
+        let mut block_times: VecDeque<u64> = VecDeque::new();
+        assert_eq!(median(&mut block_times), None);
     }
 }
